@@ -14,22 +14,24 @@ import (
 )
 
 var version = "local"
-var proxy string
 
 var app struct {
   Status bool `json:"status"`
+  ISP string `json:"isp"`
   IpAddress string `json:"ipAddress"`
   LastCheck time.Time `json:"lastChek"`
+  Proxy string
 }
 // var version = "http://192.168.0.156:4001"
 
 func main() {
-  flag.StringVar(&proxy, "proxy", "", "HTTP proxy URL to use")
+  flag.StringVar(&app.Proxy, "proxy", "", "HTTP proxy URL to use")
+  flag.StringVar(&app.ISP, "isp", "-", "ISP name for identification")
   flag.Parse()
 
-  fmt.Println("checking with the following proxy:", proxy)
+  fmt.Println("checking with the following proxy:", app.Proxy)
 
-  proxyUrl, err := url.Parse(proxy)
+  proxyUrl, err := url.Parse(app.ISP)
   if err != nil {
     fmt.Println("Error parsing proxy URL:", err)
     return
@@ -39,14 +41,14 @@ func main() {
     Timeout: time.Second * 10,
   }
 
-  if proxy != "" {
+  if app.Proxy != "" {
     client.Transport = &http.Transport{
       Proxy: http.ProxyURL(proxyUrl),
     }
   }
 
 
-  ticker := time.Tick(time.Second * 10)
+  ticker := time.Tick(time.Minute)
   sigChan := make(chan os.Signal, 1)
 
   signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
@@ -60,6 +62,7 @@ func main() {
         if err != nil {
           fmt.Println("Error getting public IP:", err)
           app.Status = false
+          return
         }
 
         app.Status = true
@@ -121,6 +124,19 @@ func main() {
       }
 
       vres, err := visitDomain(client, checkRequestBody.Domain)
+      if err != nil {
+        response.ErrorCode = 500
+        response.Message = fmt.Sprintf("domain unreachable: %s", err.Error())
+
+        resBody, err := json.Marshal(response)
+        if err != nil {
+          fmt.Println("Error marshalling response body:", err)
+        }
+
+        res.Header().Add("Content-Type", "application/json")
+        res.Write(resBody)
+        return
+      }
 
       response.ErrorCode = 0
       response.Message = "success"
@@ -174,20 +190,13 @@ func getPublicIp(client *http.Client) (string, error) {
   return out.Origin, nil
 }
 
+// This function will return the latest redirect URL
 func visitDomain(client *http.Client, domain string) (string, error) {
   res, err := client.Get(domain)
   if err != nil {
     fmt.Println("Error creating HTTP request:", err)
     return "", err
   }
-
-  // defer res.Body.Close()
-
-  // body, err := io.ReadAll(res.Body)
-  // if err != nil {
-  //   fmt.Println("Error reading response body:", err)
-  //   return "", err
-  // }
 
   return res.Request.URL.String(), nil
 }
