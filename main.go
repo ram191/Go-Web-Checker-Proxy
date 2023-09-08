@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,10 +17,11 @@ import (
 var version = "local"
 
 var app struct {
+  Port string `json:"port"`
   Status bool `json:"status"`
   ISP string `json:"isp"`
   IpAddress string `json:"ipAddress"`
-  LastCheck time.Time `json:"lastChek"`
+  LastCheck time.Time `json:"lastCheck"`
   Proxy string
 }
 // var version = "http://192.168.0.156:4001"
@@ -27,11 +29,12 @@ var app struct {
 func main() {
   flag.StringVar(&app.Proxy, "proxy", "", "HTTP proxy URL to use")
   flag.StringVar(&app.ISP, "isp", "-", "ISP name for identification")
+  flag.StringVar(&app.Port, "port", "8080", "Default port is 8080")
   flag.Parse()
 
   fmt.Println("checking with the following proxy:", app.Proxy)
 
-  proxyUrl, err := url.Parse(app.ISP)
+  proxyUrl, err := url.Parse(app.Proxy)
   if err != nil {
     fmt.Println("Error parsing proxy URL:", err)
     return
@@ -47,6 +50,16 @@ func main() {
     }
   }
 
+  // Initial check
+  publicIp, err := getPublicIp(client)
+  if err != nil {
+    fmt.Println("Error getting public IP:", err)
+    app.Status = false
+  } else {
+    app.Status = true
+    app.IpAddress = publicIp
+    app.LastCheck = time.Now()
+  }
 
   ticker := time.Tick(time.Minute)
   sigChan := make(chan os.Signal, 1)
@@ -57,7 +70,6 @@ func main() {
     for {
       select {
       case <- ticker:
-        fmt.Println("Getting public IP")
         publicIp, err := getPublicIp(client)
         if err != nil {
           fmt.Println("Error getting public IP:", err)
@@ -153,8 +165,8 @@ func main() {
   })
 
   go func() {
-    fmt.Println("Listening on port 8082")
-    http.ListenAndServe(":8082", nil)
+    fmt.Println(fmt.Sprintf("Listening on port %s", app.Port))
+    http.ListenAndServe(fmt.Sprintf(":%s", app.Port), nil)
   }()
 
   s := <-sigChan
@@ -193,9 +205,14 @@ func getPublicIp(client *http.Client) (string, error) {
 // This function will return the latest redirect URL
 func visitDomain(client *http.Client, domain string) (string, error) {
   res, err := client.Get(domain)
+  fmt.Println("status code", res.StatusCode)
+  fmt.Println("status", res.Status)
   if err != nil {
     fmt.Println("Error creating HTTP request:", err)
     return "", err
+  }
+  if res.StatusCode == http.StatusNotFound {
+    return "", errors.New("status code is 404")
   }
 
   return res.Request.URL.String(), nil
